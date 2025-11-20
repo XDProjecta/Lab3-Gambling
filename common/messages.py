@@ -13,6 +13,11 @@ MSG_INFO = "INFO"
 # Race
 MSG_RACE_UPDATE = "RACE_UPDATE"   # cliente -> servidor (posiciones)
 MSG_RACE_ACTION = "RACE_ACTION"   # acciones especiales (boost)
+MSG_RACE_EVENT  = "RACE_EVENT"
+MSG_GAME_STATE  = "GAME_STATE"
+MSG_RACE_SELECT = "RACE_SELECT"
+MSG_RACE_FINISH = "RACE_FINISH"
+
 
 # Blackjack
 MSG_BJ_JOIN = "BLACKJACK_JOIN"

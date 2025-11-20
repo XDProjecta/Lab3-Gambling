@@ -1,76 +1,118 @@
 # server/games/rat_race.py
+"""
+Carrera de Ratones mejorada:
+- Cada cliente elige un ratón.
+- Envía posiciones solo de su ratón.
+- Cuando llega a meta deja de enviar.
+- El servidor calcula ganador y ranking.
+- Envía un mensaje individual a cada jugador.
+"""
 
-import threading
+import time
 from common.messages import *
 from common.protocol import make_msg
 from config.config import CONFIG_PARAMS
-from common.colors import Color
-
-FINISH = CONFIG_PARAMS["RACE_LENGTH"]
 
 class RatRaceGame:
     def __init__(self, manager):
         self.manager = manager
-        self.positions = {}   # client_id -> {mouse_id: pos}
-        self.lock = threading.Lock()
-        self.finished_mice = set()   # set of (client_id, mouse_id) that finished
-        self.winner_announced = False
+        self.lock = manager.lock
+
+        # client_id -> ratón seleccionado ("m1", "m2", etc.)
+        self.selected_mouse = {}
+
+        # client_id -> posición actual
+        self.positions = {}
+
+        self.finished = {}       # client_id -> tiempo terminado
+        self.race_length =  CONFIG_PARAMS["RACE_LENGTH"]
+
+        self.last_update = {}    # throttling por cliente
 
     def process(self, msg, csock):
         typ = msg.get("type")
-        if typ != MSG_RACE_UPDATE:
-            return
-        client_id = msg.get("client_id")
-        mouse_id = msg.get("mouse_id")
-        pos = int(msg.get("pos", 0))
-        finish_flag = bool(msg.get("finish", False))
 
-        key = (client_id, mouse_id)
+        if typ == "RACE_SELECT":
+            client_id = msg["client_id"]
+            mouse = msg["mouse_id"]
+
+            with self.lock:
+                self.selected_mouse[client_id] = mouse
+                self.positions[client_id] = 0
+
+            print(f"[RACE] {client_id} eligió {mouse}")
+            return
+
+        if typ == MSG_RACE_UPDATE:
+            self.handle_update(msg, csock)
+
+    def handle_update(self, msg, csock):
+        client_id = msg["client_id"]
+        pos = int(msg["pos"])
+
+        # ignorar si no eligió ratón
+        if client_id not in self.selected_mouse:
+            return
+
+        # throttle: no más de un update cada 70 ms
+        now = time.time()
+        if now - self.last_update.get(client_id, 0) < 0.07:
+            return
+        self.last_update[client_id] = now
+
         with self.lock:
-            # si esta mezcla ya se marcó como final, ignorar updates extra
-            if key in self.finished_mice:
-                # opcional: log leve
-                # print(f"[RACE] Ignorado update after finish: {client_id} {mouse_id} = {pos}")
+            # evitar que siga avanzando después de meta
+            if client_id in self.finished:
                 return
 
-            self.positions.setdefault(client_id, {})[mouse_id] = pos
+            if pos >= self.race_length:
+                pos = self.race_length
+                self.positions[client_id] = pos
+                self.finished[client_id] = now
 
-            if finish_flag or pos >= FINISH:
-                self.finished_mice.add(key)
-                print(f"{Color.ORANGE}[RACE]{Color.RESET} {client_id}::{mouse_id} cruzó la meta con pos={pos}")
+                print(f"[RACE] {client_id} llegó a meta")
 
-        # anunciar si hay ganador absoluto (primera vez)
-        if not self.winner_announced:
-            winner = self._find_first_finished()
-            if winner:
-                self.winner_announced = True
-                w_client, w_mouse, w_pos = winner
-                print(f"{Color.GOLD}{Color.BOLD}🏆 GANADOR: {w_mouse} (jugador {w_client}) pos={w_pos} 🏆{Color.RESET}")
+                # verificar si todos terminaron
+                if len(self.finished) == len(self.positions):
+                    self.end_race()
 
-        # construir payload pero: si ya hay ganador absoluto y quieres dejar de spamear,
-        # podrías enviar sólo ocasionalmente. Aquí enviamos el estado actual, menos ruido porque cliente throttled.
-        payload = {"type": MSG_GAME_STATE, "game": "RACE", "positions": self.positions, "finished": list(self.finished_mice)}
-        self.manager.server.broadcast(payload)
+            else:
+                self.positions[client_id] = pos
 
-    def _find_first_finished(self):
-        # buscar el finished_mice con mayor prioridad (el que se agregó primero)
-        # dado que usamos set no hay orden; para ser sencillo, encontrar cualquier finished y devolver su pos
-        with self.lock:
-            if not self.finished_mice:
-                return None
-            # calcular la finished con mayor pos (opción simple)
-            best = None
-            for (cid, mid) in self.finished_mice:
-                pos = self.positions.get(cid, {}).get(mid, 0)
-                if best is None or pos > best[2]:
-                    best = (cid, mid, pos)
-            return best
+        # broadcast estado general (coordenadas)
+        self.manager.server.broadcast({
+            "type": MSG_GAME_STATE,
+            "game": "RACE",
+            "positions": self.positions
+        })
+
+    def end_race(self):
+        # ranking por tiempo de llegada
+        ranking = sorted(self.finished.items(), key=lambda x: x[1])
+        ordered = [r[0] for r in ranking]
+
+        print("[RACE] carrera terminada:", ordered)
+
+        # a cada jugador enviamos un mensaje individual
+        for idx, pid in enumerate(ordered):
+            place = idx + 1
+
+            result_msg = {
+                "type": "RACE_FINISH",
+                "client_id": pid,
+                "your_place": place,
+                "ranking": ordered
+            }
+
+            sock = self.manager.server.clients.get(pid)
+            if sock:
+                try:
+                    sock.sendall(make_msg(result_msg))
+                except:
+                    pass
 
     def on_disconnect(self, client_id):
-        print(f"{Color.YELLOW}[RACE] Cliente desconectado: {client_id}{Color.RESET}")
         with self.lock:
+            self.selected_mouse.pop(client_id, None)
             self.positions.pop(client_id, None)
-        try:
-            self.manager.server.broadcast({"type": MSG_GAME_STATE, "game": "RACE", "positions": self.positions})
-        except:
-            pass
+            self.finished.pop(client_id, None)
