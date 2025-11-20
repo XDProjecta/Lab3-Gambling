@@ -1,0 +1,27 @@
+# common/messages.py
+# Constantes para tipos de mensaje usados por cliente/servidor
+
+# Generales
+MSG_REGISTER = "REGISTER"
+MSG_REGISTERED = "REGISTERED"
+MSG_PING = "PING"
+MSG_PONG = "PONG"
+MSG_GAME_LIST = "GAME_LIST"
+MSG_GAME_STATE = "GAME_STATE"
+MSG_INFO = "INFO"
+
+# Race
+MSG_RACE_UPDATE = "RACE_UPDATE"   # cliente -> servidor (posiciones)
+MSG_RACE_ACTION = "RACE_ACTION"   # acciones especiales (boost)
+
+# Blackjack
+MSG_BJ_JOIN = "BLACKJACK_JOIN"
+MSG_BJ_START = "BLACKJACK_START"
+MSG_BJ_DEAL = "BLACKJACK_DEAL"
+MSG_BJ_ACTION = "BLACKJACK_ACTION"
+MSG_BJ_UPDATE = "BLACKJACK_UPDATE"
+MSG_BJ_RESULT = "BLACKJACK_RESULT"
+
+# Slots
+MSG_SLOTS_SPIN = "SLOTS_SPIN"
+MSG_SLOTS_RESULT = "SLOTS_RESULT"

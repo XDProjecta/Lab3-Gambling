@@ -1,32 +1,41 @@
 # client/client.py
+"""
+Cliente de red: conecta al servidor y lanza hilo receptor.
+Envía REGISTER al conectarse.
+"""
 import socket
 import threading
+from common.protocol import make_msg, parse_stream
 from config.config import CONFIG_PARAMS
-from common.utils import make_msg, parse_stream
 
-class RaceClient:
-    def __init__(self, client_id, on_positions_update=None):
+SERVER_IP = CONFIG_PARAMS["SERVER_IP_ADDRESS"]
+SERVER_PORT = CONFIG_PARAMS["SERVER_PORT"]
+
+class NetworkClient:
+    def __init__(self, client_id, on_message=None):
         self.client_id = client_id
-        self.on_positions_update = on_positions_update
+        self.on_message = on_message
         self.sock = None
-        self._recv_thread = None
-        self._connected = False
+        self.connected = False
         self._lock = threading.Lock()
+        self._recv_thread = None
 
     def connect(self, host=None, port=None, timeout=5):
-        host = host or CONFIG_PARAMS["SERVER_IP_ADDRESS"]
-        port = port or CONFIG_PARAMS["SERVER_PORT"]
+        host = host or SERVER_IP
+        port = port or SERVER_PORT
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.settimeout(timeout)
         self.sock.connect((host, port))
         self.sock.settimeout(None)
-        self._connected = True
+        self.connected = True
+        # register
         self.send({"type":"REGISTER", "client_id": self.client_id})
+        # start receive thread
         self._recv_thread = threading.Thread(target=self._recv_loop, daemon=True)
         self._recv_thread.start()
 
-    def send(self, obj):
-        if not self._connected or self.sock is None:
+    def send(self, obj: dict):
+        if not self.connected:
             return
         try:
             with self._lock:
@@ -37,35 +46,26 @@ class RaceClient:
     def _recv_loop(self):
         buf = b""
         try:
-            while self._connected:
+            while self.connected:
                 data = self.sock.recv(4096)
                 if not data:
                     break
                 buf += data
                 msgs = parse_stream(buf)
                 buf = b""
-                for msg in msgs:
-                    self._handle_msg(msg)
+                for m in msgs:
+                    if self.on_message:
+                        try:
+                            self.on_message(m)
+                        except:
+                            pass
         except Exception:
             pass
         finally:
             self.close()
 
-    def _handle_msg(self, msg):
-        t = msg.get("type")
-        if t == "POSITIONS":
-            positions = msg.get("positions", {})
-            if self.on_positions_update:
-                try:
-                    self.on_positions_update(positions)
-                except:
-                    pass
-
-    def send_mouse_update(self, mouse_id, pos):
-        self.send({"type":"MOUSE_UPDATE", "client_id": self.client_id, "mouse_id": mouse_id, "pos": pos})
-
     def close(self):
-        self._connected = False
+        self.connected = False
         try:
             if self.sock:
                 self.sock.close()

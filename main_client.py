@@ -1,11 +1,11 @@
 # main_client.py
 import tkinter as tk
-from client.gui_client import ClientGUI
+from client.gui_client import ClientApp
 
 def main():
     root = tk.Tk()
-    gui = ClientGUI(root)
+    app = ClientApp(root)
     root.mainloop()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
