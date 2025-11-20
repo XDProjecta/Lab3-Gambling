@@ -36,12 +36,20 @@ class NetworkClient:
 
     def send(self, obj: dict):
         if not self.connected:
+            print("[CLIENT] send() abortado: no conectado.")
             return
         try:
+            # DEBUG: ver lo que enviamos
+            try:
+                print(f"[CLIENT] Enviando -> {obj}")
+            except:
+                pass
             with self._lock:
                 self.sock.sendall(make_msg(obj))
-        except Exception:
+        except Exception as e:
+            print("[CLIENT] Error al enviar:", e)
             self.close()
+
 
     def _recv_loop(self):
         buf = b""
