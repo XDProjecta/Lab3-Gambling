@@ -54,6 +54,12 @@ class Server:
                 msgs = parse_stream(buf)
                 buf = b""
                 for msg in msgs:
+                    # DEBUG: imprimir todo mensaje entrante
+                    try:
+                        print(f"[SERVER] Mensaje recibido de {addr}: {msg}")
+                    except:
+                        print("[SERVER] Mensaje recibido (no printable)")
+
                     # registro simple
                     if msg.get("type") == "REGISTER":
                         client_id = msg.get("client_id")
@@ -64,14 +70,15 @@ class Server:
                         # notificar manager
                         try:
                             self.manager.on_client_register(client_id, csock)
-                        except:
-                            pass
+                        except Exception as e:
+                            print("[SERVER] Error on_client_register:", e)
                     else:
                         # delegar al manager
                         try:
                             self.manager.process_message(msg, csock)
                         except Exception as e:
                             print("[SERVER] Error procesando mensaje:", e)
+
         except Exception as e:
             print(f"[SERVER] Error en cliente {addr}: {e}")
         finally:

@@ -4,7 +4,7 @@
 CONFIG_PARAMS = {
     # Para arrancar el servidor: usa "0.0.0.0" para escuchar todas las interfaces
     # Para los clientes: reemplaza por la IP del servidor (ej. "192.168.0.15") cuando pruebes en LAN
-    "SERVER_IP_ADDRESS": "10.20.24.66",
+    "SERVER_IP_ADDRESS": "26.165.197.133",
     "SERVER_PORT": 5000,
     "SERVER_MAX_CLIENTS": 50,
 

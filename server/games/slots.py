@@ -1,8 +1,5 @@
 # server/games/slots.py
-"""
-Slots simple en servidor:
-- recibe SLOTS_SPIN del cliente, genera resultado y responde.
-"""
+from common.colors import Color
 import random
 from config.config import CONFIG_PARAMS
 from common.messages import *
@@ -17,19 +14,27 @@ class SlotsGame:
 
     def process(self, msg, csock):
         client_id = msg.get("client_id")
-        # generar resultado
+        print(f"{Color.BLUE}[SLOTS]{Color.RESET} SPIN recibido de {client_id}")
+
         result = [random.choice(SYMBOLS) for _ in range(REELS)]
-        # simple política de premios
+
         win = 0
         if all(x == result[0] for x in result):
             win = 100
+            print(f"{Color.GREEN}[SLOTS][JACKPOT]{Color.RESET} {client_id} → {result}")
         elif len(set(result)) == 2:
             win = 20
+            print(f"{Color.YELLOW}[SLOTS] Dos iguales {Color.RESET}{result}")
+        else:
+            print(f"{Color.BLUE}[SLOTS] Resultado normal{Color.RESET} {result}")
+
         payload = {"type": MSG_SLOTS_RESULT, "client_id": client_id, "result": result, "win": win}
+
         try:
             csock.sendall(make_msg(payload))
-        except:
-            pass
+            print(f"{Color.BLUE}[SLOTS] Resultado enviado → {result}, Premio={win}")
+        except Exception as e:
+            print(f"{Color.RED}[SLOTS] Error enviando resultado: {e}{Color.RESET}")
 
     def on_disconnect(self, client_id):
-        pass
+        print(f"{Color.YELLOW}[SLOTS] Cliente salió {client_id}{Color.RESET}")
