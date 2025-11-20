@@ -4,9 +4,9 @@ Funciones para 'dibujar' cartas en canvas sin imágenes.
 Devuelve strings representativos (ej: 'A♠') o rectángulos con texto.
 """
 def card_to_text(card):
-    # card: ["A","♠"] or ["10","♥"]
+    # card: lista o tupla [rank, suit] o ("A","♠")
     try:
         r, s = card
         return f"{r}{s}"
-    except:
+    except Exception:
         return str(card)
