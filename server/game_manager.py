@@ -1,57 +1,120 @@
+# server/game_manager.py
 """
-server/game_manager.py
-GameManager 
-Coordina los 3 juegos.
+GameManager
+-----------
+Este módulo actúa como EL CEREBRO CENTRAL del servidor.
+
+FUNCIONES PRINCIPALES:
+- Recibe los mensajes que llegan desde Server._handle_client()
+- Determina a qué juego pertenece el mensaje
+- Redirige el mensaje al módulo de juego correspondiente:
+    • Rat Race
+    • Slots
+    • Blackjack
+
+Además, maneja:
+- El registro de jugadores
+- La desconexión de jugadores
+- Protección con locks para evitar condiciones de carrera
+
+Es decir:
+El Server recibe --> GameManager decide --> Juego procesa
 """
-from common.colors import Color
-from server.games.rat_race import RatRaceGame
-from server.games.blackjack import BlackjackGame
-from server.games.slots import SlotsGame
+
 from common.messages import *
-from common.protocol import make_msg
+from server.games.rat_race import RatRaceGame
+from server.games.slots import SlotsGame
+from server.games.blackjack import BlackjackGame
 import threading
 
 class GameManager:
     def __init__(self, server):
+        """
+        Inicializa el GameManager e instancia cada juego.
+        
+        - server: referencia al Server principal.
+        - lock: lock global utilizado por los juegos para evitar condiciones
+                de carrera cuando múltiples hilos escriben al mismo tiempo.
+        """
         self.server = server
         self.lock = threading.Lock()
-        self.race = RatRaceGame(self)
-        self.blackjack = BlackjackGame(self)
+
+        # Instancias de todos los juegos disponibles
+        self.rat_race = RatRaceGame(self)
         self.slots = SlotsGame(self)
+        self.blackjack = BlackjackGame(self)
+
+    # ----------------------------------------------------------------------
+    # REGISTRO Y DESCONEXIÓN
+    # ----------------------------------------------------------------------
 
     def on_client_register(self, client_id, csock):
-        print(f"{Color.CYAN}[SERVER][REGISTER]{Color.RESET} Nuevo cliente: {client_id}")
-        try:
-            msg = {"type": MSG_GAME_LIST, "games": ["RACE", "BLACKJACK", "SLOTS"]}
-            csock.sendall(make_msg(msg))
-        except Exception as e:
-            print(f"{Color.RED}[SERVER] Error enviando GAME_LIST:{Color.RESET}", e)
+        """
+        Notificado por Server cuando un nuevo cliente se registra.
+        Puede ser usado para inicializar datos globales si fuera necesario.
+        """
+        print(f"[GM] Cliente registrado: {client_id}")
 
     def on_client_disconnect(self, client_id, csock):
-        print(f"{Color.YELLOW}[SERVER][DISCONNECT]{Color.RESET} Cliente se fue: {client_id}")
-        try: self.race.on_disconnect(client_id)
+        """
+        LLAMADO cuando un cliente se desconecta.
+        
+        Aquí notificamos a CADA JUEGO que el cliente ya no está presente.
+        Esto es importante porque:
+        - Rat Race puede tener ratones asignados a ese cliente
+        - Blackjack puede tener manos activas
+        """
+        print(f"[GM] Cliente desconectado: {client_id}")
+
+        # cada juego debe limpiar sus datos internos
+        try: self.rat_race.on_disconnect(client_id)
         except: pass
+
         try: self.blackjack.on_disconnect(client_id)
         except: pass
-        try: self.slots.on_disconnect(client_id)
-        except: pass
+
+        # slots no necesita limpieza porque no mantiene estado por jugador
+
+    # ----------------------------------------------------------------------
+    # PROCESAMIENTO GENERAL DE MENSAJES
+    # ----------------------------------------------------------------------
 
     def process_message(self, msg, csock):
+        """
+        Decide a qué juego pertenece un mensaje.
+
+        Cada mensaje que llega tiene:
+            msg["type"]  → tipo de evento
+            msg["client_id"]  → quién lo envió
+
+        Este método NO procesa mensajes directamente, 
+        sino que los ENVÍA al módulo de juego correcto.
+        """
+
         typ = msg.get("type")
-        client = msg.get("client_id")
 
-        print(f"{Color.CYAN}[SERVER][MSG]{Color.RESET} tipo={typ} desde {client} → {msg}")
+        # --------------------------
+        # MENSAJES DE RAT RACE
+        # --------------------------
+        if typ in ("RACE_SELECT", MSG_RACE_UPDATE):
+            self.rat_race.process(msg, csock)
+            return
 
-        if typ in (MSG_RACE_UPDATE, MSG_RACE_ACTION):
-            self.race.process(msg, csock); return
-
-        if typ in (MSG_BJ_JOIN, MSG_BJ_START, MSG_BJ_ACTION):
-            self.blackjack.process(msg, csock); return
-
+        # --------------------------
+        # MENSAJES DE SLOTS
+        # --------------------------
         if typ == MSG_SLOTS_SPIN:
-            self.slots.process(msg, csock); return
+            self.slots.process(msg, csock)
+            return
 
-        try:
-            csock.sendall(make_msg({"type": MSG_INFO, "msg": "Mensaje no reconocido."}))
-        except:
-            print(f"{Color.RED}Error enviando fallback{Color.RESET}")
+        # --------------------------
+        # MENSAJES DE BLACKJACK
+        # --------------------------
+        if typ in (MSG_BJ_JOIN, MSG_BJ_START, MSG_BJ_ACTION):
+            self.blackjack.process(msg, csock)
+            return
+
+        # --------------------------
+        # MENSAJE NO RECONOCIDO
+        # --------------------------
+        print(f"[GM] Mensaje desconocido recibido: {msg}")

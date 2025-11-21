@@ -1,76 +1,108 @@
-# server/gui_server.py
+# gui_server.py
 """
-GUI del servidor (Tkinter).
-Permite iniciar/detener servidor y ver logs (quita códigos ANSI al mostrar en la ventana).
-"""
-import tkinter as tk
-from tkinter import ttk, scrolledtext
-import threading
-import re
-import builtins
-from server.server import Server
+GUI del Servidor
+----------------
+Este archivo muestra:
+- Información del servidor
+- Botón para iniciar / detener
+- Consola de eventos
+- Vista gráfica del estado de la carrera de ratones
 
-# regex para eliminar secuencias ANSI (ej. \x1b[...m)
-ANSI_RE = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
+NO MANEJA LA LÓGICA DEL JUEGO.
+Eso pasa es en:
+    server/server.py
+    server/games/*
+"""
+
+import tkinter as tk
+from tkinter import ttk
+from server.server import GameServer
+from config.config import CONFIG_PARAMS
+
 
 class ServerGUI:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Servidor - ProyectoCasino")
-        self.server = Server()
-        self._orig_print = builtins.print  # guardar print original
-        self._override_print()
-        self._build_ui()
+    def __init__(self):
+        """Inicializa la ventana gráfica del servidor."""
+        self.root = tk.Tk()
+        self.root.title("Casino - Servidor")
+        self.root.geometry("900x500")
 
-    def _build_ui(self):
-        top = ttk.Frame(self.root, padding=8)
-        top.pack(fill="x")
+        # Servidor real (TCP)
+        self.server = GameServer(on_event=self.log)
 
-        ttk.Label(top, text="Servidor - ProyectoCasino", font=("Arial", 14)).pack(side="left")
+        self.build()
 
-        btns = ttk.Frame(top)
-        btns.pack(side="right")
+    def build(self):
+        """Interfaz gráfica: botones + log + panel de carrera."""
+        frame = ttk.Frame(self.root)
+        frame.pack(fill="both", expand=True)
 
-        self.start_btn = ttk.Button(btns, text="Iniciar servidor", command=self.start_server)
-        self.start_btn.pack(side="left", padx=4)
+        # Botones
+        ctrl = ttk.Frame(frame)
+        ctrl.pack(pady=10)
 
-        self.stop_btn = ttk.Button(btns, text="Detener servidor", command=self.stop_server, state="disabled")
-        self.stop_btn.pack(side="left", padx=4)
+        ttk.Button(ctrl, text="Iniciar Servidor",
+                   command=self.start).pack(side="left", padx=10)
 
-        self.log = scrolledtext.ScrolledText(self.root, height=24)
-        self.log.pack(fill="both", expand=True, padx=8, pady=8)
+        ttk.Button(ctrl, text="Detener",
+                   command=self.stop).pack(side="left", padx=10)
 
-        self.status = ttk.Label(self.root, text="Servidor detenido")
-        self.status.pack(fill="x")
+        # LOG debajo
+        self.log_box = tk.Text(frame, height=10)
+        self.log_box.pack(fill="x", padx=10, pady=10)
 
-    def _override_print(self):
-        # Redirige print para que pinte en la GUI (limpiando códigos ANSI)
-        def print_override(*args, **kwargs):
-            text = " ".join(str(a) for a in args)
-            clean = ANSI_RE.sub('', text)
-            try:
-                # insertar en widget (thread-safe desde cualquier hilo)
-                self.log.insert("end", clean + "\n")
-                self.log.see("end")
-            except Exception:
-                pass
-            # también continuar enviando al stdout original (con colores si hay)
-            try:
-                self._orig_print(text, **kwargs)
-            except Exception:
-                pass
+        # Area donde se dibuja la carrera del lado del servidor
+        self.canvas = tk.Canvas(frame, width=800, height=260,
+                                bg="#061018")
+        self.canvas.pack(padx=10, pady=10)
 
-        builtins.print = print_override
+        # Dibujar pista inicial
+        num_mice = CONFIG_PARAMS["RACE_NUM_MICE"]
+        for i in range(num_mice):
+            y = 30 + i * 50
+            self.canvas.create_rectangle(10, y - 10,
+                                         780, y + 20,
+                                         fill="#112233")
 
-    def start_server(self):
-        # arrancar servidor en hilo
-        threading.Thread(target=self.server.start, daemon=True).start()
-        self.status.config(text=f"Escuchando en {self.server.host}:{self.server.port}")
-        self.start_btn.config(state="disabled")
-        self.stop_btn.config(state="normal")
+            self.canvas.create_text(20, y,
+                                    text=f"m{i+1}",
+                                    fill="#ffcc44",
+                                    anchor="w")
 
-    def stop_server(self):
+    def log(self, msg):
+        """Escribe en el log interno del servidor."""
+        self.log_box.insert("end", msg + "\n")
+        self.log_box.see("end")
+
+    def start(self):
+        """Arranca el servidor en un hilo."""
+        self.server.start()
+        self.log("Servidor iniciado.")
+
+    def stop(self):
+        """Detiene el servidor."""
         self.server.stop()
-        self.status.config(text="Servidor detenido")
-        self.start_btn.config(state="normal")
-        self.stop_btn.config(state="disabled")
+        self.log("Servidor detenido.")
+
+    def update_race(self, positions):
+        """
+        El GameServer llama esto para mostrar posiciones en la GUI.
+        positions es un diccionario: { "m1": pos, "m2": pos, ... }
+        """
+        for m, pos in positions.items():
+            # Buscar el texto m1, m2, m3...
+            # Nota: esto es una aproximación simple
+            items = self.canvas.find_withtag("all")
+            for item in items:
+                if self.canvas.type(item) == "text":
+                    if self.canvas.itemcget(item, "text") == m:
+                        y = self.canvas.coords(item)[1]
+                        self.canvas.coords(item, 20 + pos, y)
+
+    def run(self):
+        self.root.mainloop()
+
+
+if __name__ == "__main__":
+    gui = ServerGUI()
+    gui.run()

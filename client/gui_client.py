@@ -1,119 +1,203 @@
-# client/gui_client.py
+# gui_client.py
 """
-GUI principal casino jijij para el cliente.
-Maneja escena, conexión de red y estilo general.
+GUI Client
+----------
+Este archivo controla toda la aplicación gráfica del CLIENTE.
+
+FUNCIONES PRINCIPALES:
+- Conectarse al servidor (TCP)
+- Mantener un hilo escuchando mensajes del servidor
+- Redireccionar mensajes a las escenas correspondientes
+- Administrar navegación entre escenas (Menu, Race, Blackjack, Slots)
+
+IMPORTANTE:
+Las escenas NO manejan directamente los sockets.
+Todo mensaje entrante pasa por gui_client.py.
 """
+
 import tkinter as tk
 from tkinter import ttk
-import uuid
-from client.client import NetworkClient
-from client.scenes.menu_scene import MenuScene
-from client.scenes.rat_race_scene import RaceScene
-from client.scenes.blackjack_scene import BlackjackScene
-from client.scenes.slots_scene import SlotsScene
+import threading
+import json
+import socket
+from common.messages import *
 from config.config import CONFIG_PARAMS
 
-# Paleta retro
-BG = "#0b0710"        # fondo oscuro
-PANEL = "#101420"     # paneles más claros
-NEON_PINK = "#ff48a6"
-NEON_CYAN = "#2ef0f0"
-NEON_ORANGE = "#ff9a2e"
-TEXT = "#f3f3f3"
+# Escenas
+from client.scenes.menu_scene import MenuScene
+from client.scenes.rat_race_scene import RaceScene
+from client.scenes.slots_scene import SlotsScene
+from client.scenes.blackjack_scene import BlackjackScene
+
+
+class NetworkClient:
+    """
+    Esta clase maneja TODA la comunicación de red del cliente.
+
+    MÉTODOS:
+    - connect(): se conecta al servidor TCP
+    - send(data): envía un dict convertido en JSON
+    - listen(): escucha en segundo plano todos los mensajes
+    """
+
+    def __init__(self, host, port, on_message):
+        self.host = host
+        self.port = port
+        self.socket = None
+        self.on_message = on_message  # callback hacia gui_client
+        self.connected = False
+
+    def connect(self):
+        """Intenta conectarse al servidor."""
+        try:
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.connect((self.host, self.port))
+            self.connected = True
+
+            # Iniciar hilo que escucha mensajes del server
+            threading.Thread(target=self.listen, daemon=True).start()
+            print("[CLIENT] Conectado al servidor.")
+        except Exception as e:
+            print("[CLIENT] Error conectando:", e)
+            self.connected = False
+
+    def listen(self):
+        """
+        Hilo en segundo plano:
+        lee línea por línea y las envía a gui_client.on_message().
+        """
+        try:
+            while self.connected:
+                data = self.socket.recv(4096)
+                if not data:
+                    print("[CLIENT] Servidor cerró conexión.")
+                    self.connected = False
+                    break
+
+                for line in data.split(b"\n"):
+                    if not line.strip():
+                        continue
+
+                    try:
+                        msg = json.loads(line.decode())
+                        self.on_message(msg)
+                    except Exception as e:
+                        print("[CLIENT] Error procesando JSON:", e)
+
+        except Exception as e:
+            print("[CLIENT] Error en listen():", e)
+        finally:
+            self.connected = False
+            self.socket.close()
+
+    def send(self, data):
+        """Convierte el dict en JSON y lo manda al servidor."""
+        try:
+            if self.connected:
+                raw = json.dumps(data).encode() + b"\n"
+                self.socket.sendall(raw)
+        except Exception as e:
+            print("[CLIENT] Error enviando:", e)
+
+
+# ------------------------------------------------------------
+#               APLICACIÓN PRINCIPAL DEL CLIENTE
+# ------------------------------------------------------------
 
 class ClientApp:
-    def __init__(self, root, client_id=None):
-        self.root = root
-        self.client_id = client_id or f"player-{str(uuid.uuid4())[:6]}"
-        # objeto de red (ver client/client.py)
-        self.net = NetworkClient(self.client_id, on_message=self.on_message)
+    """
+    Maneja:
+    - Las escenas
+    - El cliente TCP
+    - El enrutado de mensajes entrantes
+    """
+
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.title("Casino - Cliente")
+        self.root.geometry("900x500")
+
+        # ID del cliente (asignado por el server)
+        self.client_id = None
+
+        # Crear contenedor donde van todas las escenas
+        self.main_frame = ttk.Frame(self.root)
+        self.main_frame.pack(fill="both", expand=True)
+
+        # Iniciar red
+        host = CONFIG_PARAMS["SERVER_HOST"]
+        port = CONFIG_PARAMS["SERVER_PORT"]
+
+        self.net = NetworkClient(host, port, self.on_message)
+        self.net.connect()
+
+        # Inicializar escenas
         self.scenes = {}
         self.current_scene = None
-        self._build_ui()
-        # intenta conectar (si falla, GUI sigue funcionando)
-        try:
-            self.net.connect()
-        except Exception as e:
-            print("[CLIENT] No se pudo conectar automáticamente:", e)
 
-    def _build_ui(self):
-        # estilo global
-        self.root.title("CASINO — Cliente")
-        self.root.configure(bg=BG)
-        # contenedor principal
-        container = tk.Frame(self.root, bg=BG, padx=10, pady=10)
-        container.pack(fill="both", expand=True)
-
-        # top bar - logo neón
-        top = tk.Frame(container, bg=BG)
-        top.pack(fill="x", pady=(0,8))
-        # canvas para logo neon
-        logo = tk.Canvas(top, height=70, bg=BG, highlightthickness=0)
-        logo.pack(side="left", padx=(10,20))
-        self._draw_neon_logo(logo)
-
-        # status
-        self.status_var = tk.StringVar(value="Conexión: desconectado")
-        status_lbl = tk.Label(top, textvariable=self.status_var, bg=BG, fg=NEON_CYAN, font=("Arial", 10, "bold"))
-        status_lbl.pack(side="right", padx=10)
-
-        # panel principal (escenas)
-        panel = tk.Frame(container, bg=PANEL, bd=0)
-        panel.pack(fill="both", expand=True)
-        panel.pack_propagate(False)
-        panel.config(width=900, height=600)
-
-        # crear escenas y pasar referencia
-        self.scenes["MENU"] = MenuScene(panel, self)
-        self.scenes["RACE"] = RaceScene(panel, self)
-        self.scenes["BLACKJACK"] = BlackjackScene(panel, self)
-        self.scenes["SLOTS"] = SlotsScene(panel, self)
-
-        # mostrar menu inicial
+        self.init_scenes()
         self.show_scene("MENU")
 
-        # actualizador simple de estado
-        self.root.after(1000, self._update_status)
+    def init_scenes(self):
+        """Crea e instancia todas las escenas del cliente."""
 
-    def _draw_neon_logo(self, c: tk.Canvas):
-        # logo estilo retro: do you known what time it is???
-        w = 420; h = 70
-        c.config(width=w, height=h)
-        # rectángulo exterior glow
-        for i, col in enumerate([NEON_CYAN, NEON_PINK, NEON_ORANGE]):
-            c.create_rectangle(6-i,6-i,w-6+i,h-6+i, outline=col, width=2, stipple="")
-        # texto
-        c.create_text(w//2, h//2, text="CASINO RETRO", font=("Press Start 2P", 18), fill=NEON_PINK)
+        self.scenes["MENU"] = MenuScene(self.main_frame, self)
+        self.scenes["RACE"] = RaceScene(self.main_frame, self)
+        self.scenes["SLOTS"] = SlotsScene(self.main_frame, self)
+        self.scenes["BLACKJACK"] = BlackjackScene(self.main_frame, self)
 
-    def show_scene(self, key):
-        # ocultar todas y mostrar la solicitada
-        for s in self.scenes.values():
-            try:
-                s.pack_forget()
-            except:
-                pass
-        scene = self.scenes.get(key)
-        if scene:
-            scene.pack(fill="both", expand=True)
-            self.current_scene = scene
+    def show_scene(self, name):
+        """Cambia la escena visible."""
+        if self.current_scene:
+            self.scenes[self.current_scene].pack_forget()
+
+        self.current_scene = name
+        self.scenes[name].pack(fill="both", expand=True)
+
+    # ------------------------------------------------------------
+    #            RECEPCIÓN DE MENSAJES DEL SERVIDOR
+    # ------------------------------------------------------------
 
     def on_message(self, msg):
-        # distribuir mensajes a la escena actual si implementa handler
-        typ = msg.get("type")
-        if typ == "REGISTERED":
-            self.status_var.set(f"Conexión: registrado ({msg.get('client_id')})")
-            print("[CLIENT] Registrado en servidor:", msg.get("client_id"))
+        """
+        Punto central donde el CLIENTE recibe TODO mensaje del servidor.
+        Aquí se enrutan hacia la escena correspondiente.
+        """
+
+        # Si el servidor nos asigna un ID
+        if msg.get("type") == MSG_REGISTER:
+            self.client_id = msg["client_id"]
+            print(f"[CLIENT] Registrado como: {self.client_id}")
             return
-        # si la escena tiene handler lo ejecutamos (por ejemplo Blackjack/Slots)
-        if self.current_scene and hasattr(self.current_scene, "handle_server_msg"):
-            try:
-                self.current_scene.handle_server_msg(msg)
-            except Exception as e:
-                print("[CLIENT] Error manejando mensaje en escena:", e)
 
-    def _update_status(self):
-        # actualiza indicador de conexión
-        st = "conectado" if (self.net and getattr(self.net, "connected", False)) else "desconectado"
-        self.status_var.set(f"Conexión: {st} — {self.client_id}")
-        self.root.after(1000, self._update_status)
+        # Rat Race - GAME STATE → debe ir a la escena
+        if msg.get("type") == "GAME_STATE":
+            scene = self.scenes["RACE"]
+            for m, pos in msg["positions"].items():
+                if m in scene.canvas_objects:
+                    obj = scene.canvas_objects[m]
+                    y = scene.canvas.coords(obj)[1]
+                    scene.local_pos[m] = pos
+                    scene.canvas.coords(obj, 20 + pos, y)
+            return
 
+        # Cualquier mensaje específico de escenas:
+        scene = self.scenes.get("RACE")
+        if scene:
+            scene.handle_server_msg(msg)
+
+        scene = self.scenes.get("SLOTS")
+        if scene:
+            scene.handle_server_msg(msg)
+
+        scene = self.scenes.get("BLACKJACK")
+        if scene:
+            scene.handle_server_msg(msg)
+
+    def run(self):
+        self.root.mainloop()
+
+
+if __name__ == "__main__":
+    app = ClientApp()
+    app.run()
