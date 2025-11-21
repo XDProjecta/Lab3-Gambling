@@ -6,8 +6,8 @@ FUNCIONALIDAD:
 - Cada cliente elige un ratón (m1, m2, m3...)
 - El cliente envía periódicamente la posición de *su propio ratón*
 - El servidor guarda posiciones de cada jugador
-- Cuando un ratón llega a la meta → se marca como terminado
-- Cuando TODOS los ratones seleccionados llegan → se calcula el ranking
+- Cuando un ratón llega a la meta entonces se marca como terminado
+- Cuando TODOS los ratones seleccionados llegan se calcula el ranking
 - Se envía un mensaje individual a cada jugador indicando su puesto
 
 IMPORTANTE:
@@ -26,6 +26,7 @@ class RatRaceGame:
         - selected_mouse: {client_id: "m1" ...}
         - positions: {client_id: posición}
         - finished: {client_id: timestamp}
+        todos son diccionarios protegidos por el lock global del GameManager, para que no haya condiciones de carrera.
         """
         self.manager = manager
         self.lock = manager.lock
@@ -45,15 +46,21 @@ class RatRaceGame:
         - "RACE_SELECT": cliente elige ratón
         - MSG_RACE_UPDATE: cliente envía nueva posición
         """
+        # Determinar tipo de mensaje 
         typ = msg.get("type")
 
         # 1. El jugador eligió su ratón
+        # si el jugador envió un mensaje de tipo RACE_SELECT, entonces guardamos su elección
         if typ == "RACE_SELECT":
+            # guardamos la elección del ratón del cliente
             client_id = msg["client_id"]
+            # ratón elegido por medio del mensaje
             mouse = msg["mouse_id"]
 
             with self.lock:
+                # el ratón seleccionado por el cliente es guardado
                 self.selected_mouse[client_id] = mouse
+                # inicializamos su posición en 0
                 self.positions[client_id] = 0
 
             print(f"[RACE] {client_id} eligió {mouse}")
@@ -77,14 +84,14 @@ class RatRaceGame:
         if client_id not in self.selected_mouse:
             return
 
-        # Control de spam: máximo una actualización cada 70 ms
+        # Control de spam: máximo una actualización cada 2 segundos para evitar saturación en el servidor
         now = time.time()
-        if now - self.last_update.get(client_id, 0) < 0.07:
+        if now - self.last_update.get(client_id, 0) < 2:
             return
         self.last_update[client_id] = now
 
         with self.lock:
-            # Ya había terminado → ignorar
+            # si ya terminó, ignorar
             if client_id in self.finished:
                 return
 
@@ -96,7 +103,7 @@ class RatRaceGame:
 
                 print(f"[RACE] {client_id} llegó a meta")
 
-                # Si todos los participantes terminaron → FIN DE LA CARRERA
+                # Si todos los participantes terminaron entonces FIN DE LA CARRERA
                 if len(self.finished) == len(self.positions):
                     self.end_race()
 
@@ -122,7 +129,9 @@ class RatRaceGame:
         print("[RACE] Carrera terminada:", ordered)
 
         # Enviar ranking a cada jugador
+        # para cada jugador en orden de llegada
         for idx, pid in enumerate(ordered):
+            # su puesto es índice + 1
             place = idx + 1
 
             result_msg = {

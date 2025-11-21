@@ -115,15 +115,17 @@ class BlackjackScene(tk.Frame):
 
     def send_action(self, action):
         """Envía HIT o STAND al servidor."""
+        # si estamos conectados al servidor, entonces enviamos el mensaje al servidor en formato diccionario
         if self.net and getattr(self.net, "connected", False):
             self.net.send({
                 "type": MSG_BJ_ACTION,
                 "client_id": self.client_id,
                 "action": action
             })
+            # registramos en el log la acción enviada
             self.log_msg(f"Enviado: {action}")
 
-            # Se deshabilitan hasta recibir "REQUEST" de nuevo
+            # Se deshabilitan hasta recibir "REQUEST" de nuevo para evitar múltiples envíos rápidos
             self.hit_btn.config(state="disabled")
             self.stand_btn.config(state="disabled")
 
